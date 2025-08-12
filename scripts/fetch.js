@@ -1,6 +1,6 @@
 // scripts/fetch.js
-// Scrapes YouTube channel pages (no API key) and writes web/data.json
-// Inputs: channels.json with entries like "@JackSucksAtLife" or "UC4-79UOlP48-QNGgCko5p2g"
+// No API keys. Pull title + pfp from YouTube About page,
+// and subs/views/videos from Social Blade's realtime page.
 
 import fs from "fs/promises";
 import path from "path";
@@ -13,22 +13,49 @@ const channelsPath = path.join(__dirname, "..", "channels.json");
 const outDir = path.join(__dirname, "..", "web");
 const outFile = path.join(outDir, "data.json");
 
-const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
+const LANG = "en-US,en;q=0.9";
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function isId(x){ return /^UC[A-Za-z0-9_-]{22}$/.test(x); }
 
-function toChannelAboutURL(idOrHandle) {
-  return idOrHandle.startsWith("@")
-    ? `https://www.youtube.com/${idOrHandle}/about`
-    : `https://www.youtube.com/channel/${idOrHandle}/about`;
+function ytAboutUrl(input){
+  const base = input.startsWith("@")
+    ? `https://www.youtube.com/${input}/about`
+    : `https://www.youtube.com/channel/${input}/about`;
+  // Force EN/US and try to skip consent wall
+  return `${base}?hl=en&gl=US&persist_hl=1&persist_gl=1`;
 }
 
-// Convert strings like "1,234", "1.2K", "3.4M" to numbers
-function parseCount(str) {
+function sbRealtimeUrl(input){
+  if (input.startsWith("@")) return `https://socialblade.com/youtube/handle/${input.slice(1)}/realtime`;
+  if (isId(input)) return `https://socialblade.com/youtube/channel/${input}/realtime`;
+  // if user pasted a full https URL, try to normalize
+  return input.includes("/channel/")
+    ? `https://socialblade.com/youtube/channel/${input.split("/channel/")[1].split(/[/?#]/)[0]}/realtime`
+    : `https://socialblade.com/youtube/handle/${input.replace(/^@/,"")}/realtime`;
+}
+
+async function fetchHTML(url, extraHeaders = {}){
+  const res = await fetch(url, {
+    redirect: "follow",
+    headers: {
+      "user-agent": UA,
+      "accept-language": LANG,
+      "accept": "text/html,*/*",
+      // Helps avoid YouTube consent wall server-side:
+      "cookie": "CONSENT=YES+1",
+      ...extraHeaders
+    }
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return await res.text();
+}
+
+function parseCount(str){
   if (!str) return null;
-  const s = String(str).replace(/[, ]/g, "").toUpperCase();
-  const m = s.match(/^([\d.]+)([KMB])?/);
+  const s = String(str).replace(/[, ]+/g,"").toUpperCase();
+  const m = s.match(/^([\d.]+)([KMB])?$/) || s.match(/^(\d{4,})$/); // allow plain big ints
   if (!m) return null;
   const n = parseFloat(m[1]);
   const suf = m[2];
@@ -38,143 +65,104 @@ function parseCount(str) {
   return Math.round(n);
 }
 
-// Extract JSON by regex; YouTube embeds big JSON blobs.
-// We look for keys commonly present on channel About pages.
-function extractByRegex(html, regex) {
-  const m = html.match(regex);
-  return m ? m[1] : null;
-}
+/* ---------------- YouTube meta (title & pfp & stable IDs) ---------------- */
+function extract(html, re){ const m = html.match(re); return m ? m[1] : null; }
 
-async function fetchHTML(url) {
-  const res = await fetch(url, {
-    headers: {
-      "user-agent": UA,
-      "accept-language": "en-US,en;q=0.9",
-      "accept": "text/html,*/*"
-    }
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return await res.text();
-}
-
-// Parse minimal fields (title, pfp, subs, videos, views) from HTML
-function parseChannel(html) {
-  // Title via OG tags or metadata
+function parseYouTubeMeta(html){
   const title =
-    extractByRegex(html, /<meta property="og:title" content="([^"]+)"/) ||
-    extractByRegex(html, /"title"\s*:\s*\{"simpleText"\s*:\s*"([^"]+)"\}/) ||
-    extractByRegex(html, /"title"\s*:\s*"([^"]+)"/) ||
+    extract(html, /<meta property="og:title" content="([^"]+)"/) ||
+    extract(html, /"title"\s*:\s*\{"simpleText"\s*:\s*"([^"]+)"\}/) ||
     "";
 
-  // PFP from image_src or channelMetadataRenderer
   const pfp =
-    extractByRegex(html, /<link rel="image_src" href="([^"]+)"/) ||
-    extractByRegex(html, /"avatar"\s*:\s*\{[^}]*"thumbnails"\s*:\s*\[\s*\{[^}]*"url"\s*:\s*"([^"]+)"/) ||
+    extract(html, /<link rel="image_src" href="([^"]+)"/) ||
+    extract(html, /"avatar"\s*:\s*\{[^}]*"thumbnails"\s*:\s*\[\s*\{[^}]*"url"\s*:\s*"([^"]+)"/) ||
     "";
 
-  // Subscriber count (if visible)
-  // Examples in HTML JSON: "subscriberCountText":{"simpleText":"1.23M subscribers"}
-  const subsText =
-    extractByRegex(html, /"subscriberCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"\s*\}/) ||
-    extractByRegex(html, /"subscriberCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
-  const subs = subsText ? parseCount(subsText.replace(/[^0-9KMB.,]/gi, "")) : null;
-  const hiddenSubs = !subsText;
-
-  // Video count sometimes appears as "videoCountText":{"runs":[{"text":"123"}," videos"...]}
-  const videosText =
-    extractByRegex(html, /"videoCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"\s*\}/) ||
-    extractByRegex(html, /"videoCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
-  const videos = videosText ? parseCount(videosText.replace(/[^0-9KMB.,]/gi, "")) : null;
-
-  // Channel total views (on About): "viewCountText":{"simpleText":"123,456,789 views"}
-  const viewsText =
-    extractByRegex(html, /"viewCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"\s*\}/) ||
-    extractByRegex(html, /"viewCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
-  const views = viewsText ? parseCount(viewsText.replace(/[^0-9KMB.,]/gi, "")) : null;
-
-  // Handle / vanity URL if present
   const handle =
-    extractByRegex(html, /"canonicalChannelUrl"\s*:\s*"\/(@[^"]+)"/) ||
-    extractByRegex(html, /<link rel="canonical" href="https:\/\/www\.youtube\.com\/(@[^"\/]+)\/?"/) ||
+    extract(html, /"canonicalChannelUrl"\s*:\s*"\/(@[^"]+)"/) ||
+    extract(html, /<link rel="canonical" href="https:\/\/www\.youtube\.com\/(@[^"\/]+)\/?"/) ||
     "";
 
-  // ID from canonical channel link (always present)
   const id =
-    extractByRegex(html, /<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/([A-Za-z0-9_-]{24})/);
+    extract(html, /<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/([A-Za-z0-9_-]{24})/);
 
-  return { title, pfp, subs, videos, views, hiddenSubs, handle, id };
+  return { title, pfp, handle, id };
 }
 
-async function fetchChannel(idOrHandle, attempt = 1) {
-  const url = toChannelAboutURL(idOrHandle);
-  try {
-    const html = await fetchHTML(url);
-    const data = parseChannel(html);
-    return {
-      input: idOrHandle,
-      id: data.id || (idOrHandle.startsWith("@") ? null : idOrHandle),
-      handle: data.handle || (idOrHandle.startsWith("@") ? idOrHandle : ""),
-      title: data.title || "",
-      pfp: data.pfp || "",
-      subs: data.subs,
-      videos: data.videos,
-      views: data.views,
-      hiddenSubs: data.hiddenSubs === true
-    };
-  } catch (e) {
-    // Simple backoff on 429/5xx
-    if (attempt < 3) {
-      await sleep(1000 * attempt);
-      return fetchChannel(idOrHandle, attempt + 1);
-    }
-    return {
-      input: idOrHandle,
-      id: idOrHandle.startsWith("@") ? null : idOrHandle,
-      handle: idOrHandle.startsWith("@") ? idOrHandle : "",
-      title: "",
-      pfp: "",
-      subs: null,
-      videos: null,
-      views: null,
-      hiddenSubs: true,
-      error: String(e.message || e)
-    };
+async function getYouTubeMeta(input, attempt=1){
+  try{
+    const html = await fetchHTML(ytAboutUrl(input));
+    return parseYouTubeMeta(html);
+  }catch(e){
+    if (attempt < 3){ await sleep(1000*attempt); return getYouTubeMeta(input, attempt+1); }
+    return { title:"", pfp:"", handle: input.startsWith("@") ? input : "", id: isId(input) ? input : null, error: String(e) };
   }
 }
 
-async function main() {
-  const list = JSON.parse(await fs.readFile(channelsPath, "utf8"));
-  // Deduplicate
-  const unique = Array.from(new Set(list.map(s => s.trim()).filter(Boolean)));
+/* ---------------- Social Blade realtime (subs/views/videos) ---------------- */
+function nearestNumberAfter(html, label){
+  const i = html.toLowerCase().indexOf(label);
+  if (i < 0) return null;
+  const slice = html.slice(i, i+800); // look a bit ahead
+  // collect candidates like 4.62M / 1,110,686,437 / 1 110 686 437 etc.
+  const candidates = slice.match(/(\d[\d\s,\.]*\s*[KMB]?)/gi) || [];
+  // normalize spaces in digit groups
+  const cleaned = candidates.map(s => s.replace(/\s+(?=\d)/g, ""));
+  // pick the first that parses into a reasonable number
+  for (const c of cleaned){
+    const n = parseCount(c);
+    if (n != null) return n;
+  }
+  return null;
+}
 
-  const results = [];
-  for (let i = 0; i < unique.length; i++) {
+async function getSBStats(input, attempt=1){
+  try{
+    const html = await fetchHTML(sbRealtimeUrl(input), { referer: "https://socialblade.com/" });
+    const subs  = nearestNumberAfter(html, "subscribers");
+    const views = nearestNumberAfter(html, "views");
+    const videos= nearestNumberAfter(html, "videos");
+    return { subs, views, videos };
+  }catch(e){
+    if (attempt < 3){ await sleep(1000*attempt); return getSBStats(input, attempt+1); }
+    return { subs:null, views:null, videos:null, error: String(e) };
+  }
+}
+
+/* ---------------- Main ---------------- */
+async function main(){
+  const inputList = JSON.parse(await fs.readFile(channelsPath, "utf8"))
+    .map(s => s.trim()).filter(Boolean);
+  const unique = Array.from(new Set(inputList));
+
+  const out = [];
+  for (let i=0;i<unique.length;i++){
     const item = unique[i];
-    // Gentle pacing to avoid 429s
-    if (i > 0) await sleep(500 + Math.random() * 300);
-    const data = await fetchChannel(item);
-    results.push(data);
-    console.log(`[${i + 1}/${unique.length}] ${item} ⇒ ${data.title || data.id || data.handle || "?"}`);
+    if (i>0) await sleep(700 + Math.random()*400); // be polite
+    const yt = await getYouTubeMeta(item);
+    const sb = await getSBStats(yt.handle || (isId(item) ? item : item));
+    const row = {
+      input: item,
+      id: yt.id || (isId(item) ? item : null),
+      handle: yt.handle || (item.startsWith("@") ? item : ""),
+      title: yt.title || "",
+      pfp: yt.pfp || "",
+      subs: sb.subs,
+      views: sb.views,
+      videos: sb.videos,
+      hiddenSubs: sb.subs == null // if SB couldn't get it, treat as hidden/unknown
+    };
+    out.push(row);
+    console.log(`[${i+1}/${unique.length}] ${row.title || row.handle || row.id || item} — subs:${row.subs ?? "?"} views:${row.views ?? "?"} vids:${row.videos ?? "?"}`);
   }
 
-  // Sort by subs desc when available, else by title
-  results.sort((a, b) => {
-    const as = a.subs ?? -1, bs = b.subs ?? -1;
-    if (as !== bs) return bs - as;
-    return (a.title || "").localeCompare(b.title || "");
-  });
+  // Sort by subs (desc), then title
+  out.sort((a,b)=> (b.subs??-1)-(a.subs??-1) || (a.title||"").localeCompare(b.title||""));
 
-  await fs.mkdir(outDir, { recursive: true });
-  await fs.writeFile(
-    outFile,
-    JSON.stringify({ generatedAt: new Date().toISOString(), channels: results }, null, 2),
-    "utf8"
-  );
-
-  console.log(`Wrote ${results.length} channels → ${path.relative(process.cwd(), outFile)}`);
+  await fs.mkdir(outDir, {recursive:true});
+  await fs.writeFile(outFile, JSON.stringify({ generatedAt: new Date().toISOString(), channels: out }, null, 2), "utf8");
+  console.log(`Wrote ${out.length} channels → ${path.relative(process.cwd(), outFile)}`);
 }
 
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+main().catch(e=>{ console.error(e); process.exit(1); });
