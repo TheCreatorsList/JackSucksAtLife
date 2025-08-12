@@ -1,1 +1,10 @@
+{
+  "name": "jacksucks-network",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/fetch.js"
+  },
+  "dependencies": {}
+}
 
