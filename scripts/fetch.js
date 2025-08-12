@@ -1,6 +1,6 @@
 // 2
 // Build channel directory with stats (title, handle, id, pfp, verified, subs, videos, views)
-// No API keys. Prefers YouTube /about; falls back to SocialBlade realtime (robust parser).
+// No API keys. Prefers YouTube /about; falls back to SocialBlade profile (Uploads/Video Views) with /realtime as backup.
 
 import fs from "fs/promises";
 import path from "path";
@@ -45,7 +45,7 @@ function normalizeInput(s) {
     if (mId) return mId[1];
     const mH = u.pathname.match(/\/@([^/?#]+)/);
     if (mH) return "@" + mH[1];
-    // legacy /user/... — keep as URL, we'll still fetch it
+    // legacy /user/... — keep as URL; we'll still fetch it
     return t;
   } catch {
     return t;
@@ -73,7 +73,14 @@ function ytAboutUrl(x) {
   )}/about?hl=en&gl=US&persist_hl=1&persist_gl=1`;
 }
 
-const sbUrl = (x) =>
+// Social Blade: prefer main profile page (stable "Uploads"/"Video Views" labels). Fallback to /realtime.
+const sbMainUrl = (x) =>
+  isHandle(x)
+    ? `https://socialblade.com/youtube/handle/${x.slice(1)}`
+    : isId(x)
+    ? `https://socialblade.com/youtube/channel/${x}`
+    : `https://socialblade.com/youtube/handle/${x.replace(/^@/, "")}`;
+const sbRealtimeUrl = (x) =>
   isHandle(x)
     ? `https://socialblade.com/youtube/handle/${x.slice(1)}/realtime`
     : isId(x)
@@ -182,14 +189,14 @@ async function getYouTube(x, attempt = 1) {
   }
 }
 
-/* ---------- SocialBlade fallback (robust parser) ---------- */
+/* ---------- SocialBlade helpers (profile-first, realtime fallback) ---------- */
+
 // Prefer K/M/B forms, then grouped ints, then plain big ints (>=4 digits).
-// Ignore tiny 1–3 digit junk near labels.
 function pickBestNumberAfter(html, label) {
   const i = html.toLowerCase().indexOf(label.toLowerCase());
   if (i < 0) return null;
 
-  const slice = html.slice(i, i + 2000);
+  const slice = html.slice(i, i + 2500);
 
   // 1) Suffixed like "4.62M"
   const suffixed = slice.match(/\b(\d+(?:\.\d+)?\s*[KMB])\b/gi);
@@ -206,20 +213,51 @@ function pickBestNumberAfter(html, label) {
   return null;
 }
 
+// Try SocialBlade main page first (has "Uploads", "Subscribers", "Video Views")
+async function getSBFromProfile(x) {
+  const html = await fetchText(sbMainUrl(x), { referer: "https://socialblade.com/" });
+  const uploads = pickBestNumberAfter(html, "Uploads");
+  const subs = pickBestNumberAfter(html, "Subscribers");
+  const views = pickBestNumberAfter(html, "Video Views");
+  return { uploads, subs, views };
+}
+
+// If profile page fails/blocked, try realtime page labels ("Subscribers", "Videos", "Video Views")
+async function getSBFromRealtime(x) {
+  const html = await fetchText(sbRealtimeUrl(x), { referer: "https://socialblade.com/" });
+  // Some realtime pages say "Videos", others say "Uploads"; try both.
+  const videos = pickBestNumberAfter(html, "Videos") ?? pickBestNumberAfter(html, "Uploads");
+  const subs = pickBestNumberAfter(html, "Subscribers");
+  const views = pickBestNumberAfter(html, "Video Views");
+  return { uploads: videos, subs, views };
+}
+
 async function getSBCounts(x, attempt = 1) {
   try {
-    const html = await fetchText(sbUrl(x), { referer: "https://socialblade.com/" });
-    return {
-      subs: pickBestNumberAfter(html, "subscribers"),
-      views: pickBestNumberAfter(html, "views"),
-      videos: pickBestNumberAfter(html, "videos"),
-    };
+    // 1) Profile page (preferred)
+    const p = await getSBFromProfile(x);
+    // 2) If any missing, patch from realtime
+    if (p.uploads == null || p.subs == null || p.views == null) {
+      try {
+        const r = await getSBFromRealtime(x);
+        p.uploads = p.uploads ?? r.uploads;
+        p.subs = p.subs ?? r.subs;
+        p.views = p.views ?? r.views;
+      } catch { /* ignore */ }
+    }
+    return { subs: p.subs ?? null, videos: p.uploads ?? null, views: p.views ?? null };
   } catch (e) {
     if (attempt < 2) {
       await sleep(1200 * attempt);
       return getSBCounts(x, attempt + 1);
     }
-    return { subs: null, views: null, videos: null };
+    // final fallback: try realtime only
+    try {
+      const r = await getSBFromRealtime(x);
+      return { subs: r.subs ?? null, videos: r.uploads ?? null, views: r.views ?? null };
+    } catch {
+      return { subs: null, videos: null, views: null };
+    }
   }
 }
 
@@ -231,17 +269,17 @@ async function main() {
   const rows = [];
   for (let i = 0; i < inputs.length; i++) {
     const item = inputs[i];
-    if (i > 0) await sleep(800 + Math.random() * 400); // be gentle
+    if (i > 0) await sleep(900 + Math.random() * 500); // be gentle
 
     const yt = await getYouTube(item);
 
-    // Use YT counts when present; SB only fills gaps
+    // Use YT counts when present; SB fills gaps (Uploads->videos, Video Views->views)
     let { subs, views, videos } = yt;
     if (subs == null || views == null || videos == null) {
       const sb = await getSBCounts(yt.handle || yt.id || item);
       subs = subs ?? sb.subs;
-      views = views ?? sb.views;
-      videos = videos ?? sb.videos;
+      views = views ?? sb.views;     // lifetime "Video Views"
+      videos = videos ?? sb.videos;  // "Uploads"
     }
 
     rows.push({
