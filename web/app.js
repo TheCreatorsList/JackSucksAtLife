@@ -1,15 +1,26 @@
-// Minimal, fast, pretty. Only shows channels (+ verified badge).
+// Channel directory with verified badge + on-click stats modal (no API key).
 const $grid = document.getElementById("grid");
 const $empty = document.getElementById("empty");
 const $search = document.getElementById("search");
 const $sort = document.getElementById("sort");
 const $updated = document.getElementById("updated");
 
+// Modal refs
+const $modal = document.getElementById("modal");
+const $mClose = document.getElementById("m-close");
+const $mTitle = document.getElementById("m-title");
+const $mHandle = document.getElementById("m-handle");
+const $mPfp = document.getElementById("m-pfp");
+const $mSubs = document.getElementById("m-subs");
+const $mVideos = document.getElementById("m-videos");
+const $mViews = document.getElementById("m-views");
+const $mLink = document.getElementById("m-link");
+
 let channels = [];
 let filtered = [];
 let sortAZ = true;
 
-function linkFor(c) { 
+function linkFor(c) {
   if (c.id) return `https://www.youtube.com/channel/${c.id}`;
   if (c.handle) return `https://www.youtube.com/${c.handle.replace(/^\s*@/, "@")}`;
   return "#";
@@ -21,10 +32,16 @@ const verifiedSVG =
 function cardHTML(c) {
   const title = c.title || c.handle || c.id || "Channel";
   const handle = c.handle || "";
-  const pfp = c.pfp || "https://i.stack.imgur.com/l60Hf.png"; // tiny fallback
+  const pfp = c.pfp || "https://i.stack.imgur.com/l60Hf.png";
   const badge = c.verified ? verifiedSVG : "";
+  const dataAttrs = [
+    `data-id="${c.id || ""}"`,
+    `data-handle="${(c.handle || "").replace(/"/g, "&quot;")}"`,
+    `data-title="${(title || "").replace(/"/g, "&quot;")}"`,
+    `data-pfp="${pfp}"`
+  ].join(" ");
   return `
-    <li class="card" tabindex="0">
+    <li class="card" tabindex="0" ${dataAttrs}>
       <a href="${linkFor(c)}" target="_blank" rel="noopener" class="link" aria-label="${title}">
         <img class="pfp" loading="lazy" decoding="async" src="${pfp}" alt="${title} profile picture">
         <div class="meta">
@@ -42,10 +59,10 @@ function render(list) {
     const B = (b.title || b.handle || b.id || "").toLowerCase();
     return sortAZ ? A.localeCompare(B) : B.localeCompare(A);
   });
-
   $grid.innerHTML = list.map(cardHTML).join("");
   $empty.hidden = list.length > 0;
 
+  // Reveal anim
   const obs = "IntersectionObserver" in window
     ? new IntersectionObserver(entries => {
         for (const e of entries) {
@@ -53,7 +70,6 @@ function render(list) {
         }
       }, { rootMargin: "80px" })
     : null;
-
   if (obs) document.querySelectorAll(".card").forEach(el => obs.observe(el));
 }
 
@@ -82,6 +98,83 @@ async function boot() {
     console.error(e);
   }
 }
+
+// ---------- Modal behavior ----------
+function openModal() { $modal.hidden = false; document.body.style.overflow = "hidden"; }
+function closeModal() { $modal.hidden = true; document.body.style.overflow = ""; }
+$mClose.addEventListener("click", closeModal);
+$modal.addEventListener("click", (e) => { if (e.target === $modal) closeModal(); });
+window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$modal.hidden) closeModal(); });
+
+function fmt(n) {
+  if (n == null) return "—";
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "—";
+  if (x >= 1_000_000_000) return (x/1_000_000_000).toFixed(2) + "B";
+  if (x >= 1_000_000) return (x/1_000_000).toFixed(2) + "M";
+  if (x >= 1_000) return (x/1_000).toFixed(1) + "K";
+  return x.toLocaleString();
+}
+
+async function fetchStatsFor(c) {
+  // Try Lemnos (no-key) – has CORS and is browser-friendly
+  const idOrHandle = c.id ? `id=${c.id}` : `forHandle=${encodeURIComponent((c.handle || "").replace(/^@/, ""))}`;
+  const url = `https://yt.lemnoslife.com/noKey/channels?part=snippet,statistics&${idOrHandle}`;
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error("stats fetch failed");
+  const j = await r.json();
+  const item = j?.items?.[0];
+  if (!item) throw new Error("no stats item");
+  const s = item.statistics || {};
+  return {
+    subs: s.hiddenSubscriberCount ? null : (s.subscriberCount ? Number(s.subscriberCount) : null),
+    videos: s.videoCount ? Number(s.videoCount) : null,
+    views: s.viewCount ? Number(s.viewCount) : null
+  };
+}
+
+async function showDetailsFromCard(li) {
+  const title = li.dataset.title || "Channel";
+  const handle = li.dataset.handle || "";
+  const id = li.dataset.id || "";
+  const pfp = li.dataset.pfp || "";
+
+  // Fill basic info immediately
+  $mTitle.textContent = title;
+  $mHandle.textContent = handle || id || "";
+  $mPfp.src = pfp;
+  $mPfp.alt = `${title} profile picture`;
+  $mSubs.textContent = "…";
+  $mVideos.textContent = "…";
+  $mViews.textContent = "…";
+  $mLink.href = id ? `https://www.youtube.com/channel/${id}` :
+              handle ? `https://www.youtube.com/${handle.replace(/^\s*@/,"@")}` : "#";
+
+  openModal();
+
+  try {
+    const stats = await fetchStatsFor({ id, handle });
+    $mSubs.textContent = fmt(stats.subs);
+    $mVideos.textContent = fmt(stats.videos);
+    $mViews.textContent = fmt(stats.views);
+  } catch (e) {
+    console.warn("Stats fetch failed:", e);
+    $mSubs.textContent = "—";
+    $mVideos.textContent = "—";
+    $mViews.textContent = "—";
+  }
+}
+
+// Event delegation: click a card -> modal.
+// Hold Cmd/Ctrl to open YouTube instead (default link).
+$grid.addEventListener("click", (e) => {
+  const a = e.target.closest("a.link");
+  const li = e.target.closest("li.card");
+  if (!li || !a) return;
+  if (e.metaKey || e.ctrlKey) return; // let modified-click open link
+  e.preventDefault();
+  showDetailsFromCard(li);
+});
 
 $search.addEventListener("input", applyFilter);
 $sort.addEventListener("click", () => {
