@@ -1,4 +1,4 @@
-// Minimal, fast, pretty. Only shows channels.
+// Minimal, fast, pretty. Only shows channels (+ verified badge).
 const $grid = document.getElementById("grid");
 const $empty = document.getElementById("empty");
 const $search = document.getElementById("search");
@@ -15,16 +15,20 @@ function linkFor(c) {
   return "#";
 }
 
+const verifiedSVG =
+  '<svg class="badge" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.39 2.39 3.38-.54 1.17 3.26 3.06 1.76-1.76 3.06.54 3.38-3.26 1.17-1.76 3.06-3.38-.54L12 22l-2.39-2.39-3.38.54-1.17-3.26L2 14.87l1.76-3.06-.54-3.38 3.26-1.17 1.76-3.06 3.38.54L12 2zm-1.2 12.6l5-5-1.4-1.4-3.6 3.6-1.6-1.6-1.4 1.4 3 3z"></path></svg>';
+
 function cardHTML(c) {
   const title = c.title || c.handle || c.id || "Channel";
   const handle = c.handle || "";
   const pfp = c.pfp || "https://i.stack.imgur.com/l60Hf.png"; // tiny fallback
+  const badge = c.verified ? verifiedSVG : "";
   return `
     <li class="card" tabindex="0">
       <a href="${linkFor(c)}" target="_blank" rel="noopener" class="link" aria-label="${title}">
         <img class="pfp" loading="lazy" decoding="async" src="${pfp}" alt="${title} profile picture">
         <div class="meta">
-          <div class="title" title="${title}">${title}</div>
+          <div class="title" title="${title}">${title}${badge}</div>
           <div class="handle">${handle}</div>
         </div>
       </a>
@@ -33,20 +37,15 @@ function cardHTML(c) {
 }
 
 function render(list) {
-  // sort
   list.sort((a, b) => {
     const A = (a.title || a.handle || a.id || "").toLowerCase();
     const B = (b.title || b.handle || b.id || "").toLowerCase();
     return sortAZ ? A.localeCompare(B) : B.localeCompare(A);
   });
 
-  // draw
   $grid.innerHTML = list.map(cardHTML).join("");
-
-  // empty state
   $empty.hidden = list.length > 0;
 
-  // reveal animation
   const obs = "IntersectionObserver" in window
     ? new IntersectionObserver(entries => {
         for (const e of entries) {
@@ -75,11 +74,8 @@ async function boot() {
     const json = await res.json();
     channels = json.channels || [];
     filtered = [...channels];
-
-    // show timestamp
     const t = json.generatedAt ? new Date(json.generatedAt) : null;
     $updated.textContent = t ? `Last update: ${t.toLocaleString()}` : "";
-
     render(filtered);
   } catch (e) {
     $updated.textContent = "Could not load data.json";
@@ -87,7 +83,6 @@ async function boot() {
   }
 }
 
-// events
 $search.addEventListener("input", applyFilter);
 $sort.addEventListener("click", () => {
   sortAZ = !sortAZ;
