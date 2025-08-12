@@ -9,7 +9,7 @@ import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
+ 
 const channelsPath = path.join(__dirname, "..", "channels.json");
 const outDir = path.join(__dirname, "..", "web");
 const outFile = path.join(outDir, "data.json");
