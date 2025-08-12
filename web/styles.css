@@ -3,7 +3,7 @@
   --bg2: radial-gradient(1200px 800px at 20% -10%, #9b5cff33, transparent 60%),
          radial-gradient(1000px 700px at 120% 20%, #24d6ff22, transparent 50%),
          linear-gradient(180deg, #0b0b0f, #0b0b10);
-  --card: rgba(255,255,255,0.06);
+  --card: rgba(255,255,255,0.06); 
   --card-hover: rgba(255,255,255,0.10);
   --border: rgba(255,255,255,0.10);
   --text: #eaeaf1;
