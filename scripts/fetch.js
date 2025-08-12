@@ -1,5 +1,4 @@
 // 2
-// scripts/fetch.js
 // Build channel directory with stats (title, handle, id, pfp, verified, subs, videos, views)
 // No API keys. Prefers YouTube /about; falls back to SocialBlade realtime (robust parser).
 
@@ -9,12 +8,13 @@ import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
- 
+
 const channelsPath = path.join(__dirname, "..", "channels.json");
 const outDir = path.join(__dirname, "..", "web");
 const outFile = path.join(outDir, "data.json");
 
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
 const LANG = "en-US,en;q=0.9";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -45,7 +45,8 @@ function normalizeInput(s) {
     if (mId) return mId[1];
     const mH = u.pathname.match(/\/@([^/?#]+)/);
     if (mH) return "@" + mH[1];
-    return t; // legacy /user/… kept as URL
+    // legacy /user/... — keep as URL, we'll still fetch it
+    return t;
   } catch {
     return t;
   }
@@ -54,16 +55,22 @@ function normalizeInput(s) {
 function ytAboutUrl(x) {
   if (/^https?:\/\//i.test(x)) {
     const u = new URL(x);
-    if (!/\/about\/?$/.test(u.pathname)) u.pathname = u.pathname.replace(/\/$/, "") + "/about";
+    if (!/\/about\/?$/.test(u.pathname))
+      u.pathname = u.pathname.replace(/\/$/, "") + "/about";
     u.searchParams.set("hl", "en");
     u.searchParams.set("gl", "US");
     u.searchParams.set("persist_hl", "1");
     u.searchParams.set("persist_gl", "1");
     return u.toString();
   }
-  if (isHandle(x)) return `https://www.youtube.com/${x}/about?hl=en&gl=US&persist_hl=1&persist_gl=1`;
-  if (isId(x)) return `https://www.youtube.com/channel/${x}/about?hl=en&gl=US&persist_hl=1&persist_gl=1`;
-  return `https://www.youtube.com/@${x.replace(/^@/, "")}/about?hl=en&gl=US&persist_hl=1&persist_gl=1`;
+  if (isHandle(x))
+    return `https://www.youtube.com/${x}/about?hl=en&gl=US&persist_hl=1&persist_gl=1`;
+  if (isId(x))
+    return `https://www.youtube.com/channel/${x}/about?hl=en&gl=US&persist_hl=1&persist_gl=1`;
+  return `https://www.youtube.com/@${x.replace(
+    /^@/,
+    ""
+  )}/about?hl=en&gl=US&persist_hl=1&persist_gl=1`;
 }
 
 const sbUrl = (x) =>
@@ -71,7 +78,10 @@ const sbUrl = (x) =>
     ? `https://socialblade.com/youtube/handle/${x.slice(1)}/realtime`
     : isId(x)
     ? `https://socialblade.com/youtube/channel/${x}/realtime`
-    : `https://socialblade.com/youtube/handle/${x.replace(/^@/, "")}/realtime`;
+    : `https://socialblade.com/youtube/handle/${x.replace(
+        /^@/,
+        ""
+      )}/realtime`;
 
 async function fetchText(url, extraHeaders = {}) {
   const res = await fetch(url, {
@@ -98,12 +108,18 @@ function parseYouTube(html) {
 
   const pfp =
     ex(html, /<link rel="image_src" href="([^"]+)"/) ||
-    ex(html, /"avatar"\s*:\s*\{[^}]*"thumbnails"\s*:\s*\[\s*\{[^}]*"url"\s*:\s*"([^"]+)"/) ||
+    ex(
+      html,
+      /"avatar"\s*:\s*\{[^}]*"thumbnails"\s*:\s*\[\s*\{[^}]*"url"\s*:\s*"([^"]+)"/
+    ) ||
     "";
 
   const handle =
     ex(html, /"canonicalChannelUrl"\s*:\s*"\/(@[^"]+)"/) ||
-    ex(html, /<link rel="canonical" href="https:\/\/www\.youtube\.com\/(@[^"\/]+)\/?"/) ||
+    ex(
+      html,
+      /<link rel="canonical" href="https:\/\/www\.youtube\.com\/(@[^"\/]+)\/?"/
+    ) ||
     "";
 
   const id = ex(
@@ -112,23 +128,33 @@ function parseYouTube(html) {
   );
 
   const verified =
-    /"metadataBadgeRenderer"\s*:\s*\{[^}]*"style"\s*:\s*"BADGE_STYLE_TYPE_VERIFIED"/i.test(html) ||
-    /"tooltip"\s*:\s*"Verified"/i.test(html);
+    /"metadataBadgeRenderer"\s*:\s*\{[^}]*"style"\s*:\s*"BADGE_STYLE_TYPE_VERIFIED"/i.test(
+      html
+    ) || /"tooltip"\s*:\s*"Verified"/i.test(html);
 
   // counts (if present on About page)
   const subsTxt =
     ex(html, /"subscriberCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
-    ex(html, /"subscriberCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
+    ex(
+      html,
+      /"subscriberCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/
+    );
   const subs = subsTxt ? parseCount(subsTxt.replace(/[^0-9KMB.,]/g, "")) : null;
 
   const vidsTxt =
     ex(html, /"videoCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
-    ex(html, /"videoCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
+    ex(
+      html,
+      /"videoCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/
+    );
   const videos = vidsTxt ? parseCount(vidsTxt.replace(/[^0-9KMB.,]/g, "")) : null;
 
   const viewsTxt =
     ex(html, /"viewCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
-    ex(html, /"viewCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
+    ex(
+      html,
+      /"viewCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/
+    );
   const views = viewsTxt ? parseCount(viewsTxt.replace(/[^0-9KMB.,]/g, "")) : null;
 
   return { title, pfp, handle, id, verified, subs, videos, views };
@@ -248,4 +274,14 @@ async function main() {
   await fs.mkdir(outDir, { recursive: true });
   await fs.writeFile(
     outFile,
-    JSON.stringify({ generatedAt: new Date().toISOString(),
+    JSON.stringify({ generatedAt: new Date().toISOString(), channels: rows }, null, 2),
+    "utf8"
+  );
+
+  console.log(`Wrote ${rows.length} channels → ${path.relative(process.cwd(), outFile)}`);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
