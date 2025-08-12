@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JackSucksAt Channels</title>
+  <title>JackSucks Channels</title>
   <meta name="theme-color" content="#9b5cff" />
   <link rel="preconnect" href="https://i.ytimg.com" crossorigin>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <header class="wrap">
-    <h1>JackSucksAt Channels</h1>
+    <h1>JackSucks Channels</h1>
     <p id="updated" class="muted">Loading…</p>
     <div class="controls">
       <input id="search" type="search" autocomplete="off" placeholder="Search channels…" aria-label="Search channels" />
@@ -24,63 +24,29 @@
   </main>
 
   <footer class="wrap muted">
-    <p>Auto-updates Every 15 Mins Made by T3chie_Jack</p>
-    <!-- 🔗 Footer Portfolio Button — TechieJack -->
-<a class="tj-portfolio-btn" href="https://t3chiejack.github.io/AboutMe/" target="_blank" rel="noopener"
-   aria-label="View TechieJack's Portfolio">
-  <span class="tj-dot" aria-hidden="true"></span>
-  <span class="tj-label">My Portfolio</span>
-  <svg class="tj-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path d="M5 12h14M13 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>
-</a>
+    <p>Auto-updated on GitHub Pages • No sign-in, no API.</p>
   </footer>
-  
 
-<style>
- 
-  .tj-portfolio-btn{
-    --tj-pink:#ff4d87; --tj-purple:#7a3eff; --tj-cyan:#00e5ff;
-    position:relative; display:inline-flex; align-items:center; gap:10px;
-    padding:10px 14px; border-radius:999px; text-decoration:none; color:#fff;
-    font:700 14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;
-    background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.03));
-    border:1px solid rgba(255,255,255,.12);
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,.05), 0 8px 22px rgba(0,0,0,.25);
-    overflow:hidden; isolation:isolate; transition:transform .15s ease, box-shadow .2s ease, border-color .2s ease;
-  }
-  .tj-portfolio-btn::before{
-    content:""; position:absolute; inset:-2px; border-radius:inherit; z-index:-1;
-    background:conic-gradient(from 0deg,var(--tj-pink),var(--tj-purple),var(--tj-cyan),var(--tj-pink));
-    filter:blur(10px); opacity:.35; animation:tj-spin 6s linear infinite;
-  }
-  .tj-portfolio-btn:hover{ transform:translateY(-2px); border-color:rgba(255,255,255,.2);
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), 0 12px 32px rgba(255,77,135,.25);}
-  .tj-label{letter-spacing:.2px}
-  .tj-arrow{opacity:.8; transition:transform .2s ease, opacity .2s ease}
-  .tj-portfolio-btn:hover .tj-arrow{transform:translateX(2px); opacity:1}
-
-  .tj-dot{
-    width:8px; height:8px; border-radius:50%;
-    background: radial-gradient(circle at 40% 40%, #fff 8%, var(--tj-pink) 45%, var(--tj-pink));
-    box-shadow:0 0 10px rgba(255,77,135,.7), 0 0 24px rgba(122,62,255,.5);
-    animation:tj-breathe 2.4s ease-in-out infinite;
-  }
-
-  @keyframes tj-breathe{
-    0%,100%{ transform:scale(.9); box-shadow:0 0 8px rgba(255,77,135,.6), 0 0 18px rgba(122,62,255,.45)}
-    50%     { transform:scale(1.1); box-shadow:0 0 14px rgba(255,77,135,.8), 0 0 28px rgba(122,62,255,.6)}
-  }
-  @keyframes tj-spin{to{transform:rotate(1turn)}}
-
-
-  @media (prefers-reduced-motion: reduce){
-    .tj-portfolio-btn::before, .tj-dot{animation:none}
-    .tj-portfolio-btn, .tj-arrow{transition:none}
-  }
-</style>
+  <!-- Detail modal -->
+  <div id="modal" class="modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="m-title">
+      <button id="m-close" class="close" aria-label="Close">×</button>
+      <div class="head">
+        <img id="m-pfp" class="pfp-lg" alt="">
+        <div class="head-meta">
+          <h2 id="m-title">Channel</h2>
+          <div id="m-handle" class="muted">@handle</div>
+        </div>
+      </div>
+      <ul class="stats">
+        <li><span>Subscribers</span><strong id="m-subs">—</strong></li>
+        <li><span>Videos</span><strong id="m-videos">—</strong></li>
+        <li><span>Total views</span><strong id="m-views">—</strong></li>
+      </ul>
+      <a id="m-link" class="cta" target="_blank" rel="noopener">Open channel ↗</a>
+    </div>
+  </div>
 
   <script src="./app.js" type="module"></script>
 </body>
 </html>
-
