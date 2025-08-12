@@ -1,4 +1,4 @@
-// Uses stats from data.json (built by GitHub Action). No live fetches.
+// 1
 (function () {
   const $ = (id)=>document.getElementById(id);
   const $grid=$("grid"), $empty=$("empty"), $search=$("search"), $sort=$("sort"), $updated=$("updated");
@@ -85,7 +85,7 @@
     const a=e.target.closest?.("a.link");
     const li=e.target.closest?.("li.card");
     if (!li || !a) return;
-    if (e.metaKey||e.ctrlKey) return; // allow open-in-new-tab
+    if (e.metaKey||e.ctrlKey) return; 
     e.preventDefault();
 
     const title=li.dataset.title || "Channel";
