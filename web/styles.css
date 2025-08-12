@@ -8,7 +8,7 @@
   --border: rgba(255,255,255,0.10);
   --text: #eaeaf1;
   --muted: #a0a3ad;
-  --accent: #9b5cff;
+  --accent: #9b5cff; 
 }
 
 * { box-sizing: border-box; }
