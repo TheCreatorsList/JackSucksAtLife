@@ -42,6 +42,8 @@ h1{ margin: 0 0 6px; font-weight: 800; letter-spacing: -0.02em; }
 #search::placeholder{ color: #888; }
 #search:focus{ border-color: var(--accent); box-shadow: 0 0 0 3px #9b5cff33; }
 
+#modal[hidden] { display: none !important; }
+
 #sort{
   padding: 12px 14px;
   border-radius: 12px;
