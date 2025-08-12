@@ -3,29 +3,31 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JackSucks Network – Stats</title>
+  <title>JackSucks Channels</title>
+  <meta name="theme-color" content="#9b5cff" />
+  <link rel="preconnect" href="https://i.ytimg.com" crossorigin>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <header>
+  <header class="wrap">
     <h1>JackSucks Channels</h1>
-    <p class="sub">Last update: <span id="generatedAt">—</span></p>
-    <input id="search" type="search" placeholder="Search channels…" />
+    <p id="updated" class="muted">Loading…</p>
+    <div class="controls">
+      <input id="search" type="search" autocomplete="off" placeholder="Search channels…" aria-label="Search channels" />
+      <button id="sort" aria-label="Sort A → Z">A → Z</button>
+    </div>
   </header>
-  <main>
-    <table id="tbl">
-      <thead>
-        <tr>
-          <th data-sort="name">Channel</th>
-          <th data-sort="subs">Subscribers</th>
-          <th data-sort="videos">Videos</th>
-          <th data-sort="views">Views</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+
+  <main class="wrap">
+    <ul id="grid" class="grid" role="list" aria-live="polite"></ul>
+    <p id="empty" class="empty muted" hidden>No channels match your search.</p>
   </main>
-  <footer><p>Auto-updated on GitHub Pages (no API key).</p></footer>
-  <script src="./app.js"></script>
+
+  <footer class="wrap muted">
+    <p>Auto-updated on GitHub Pages • No sign-in, no API.</p>
+  </footer>
+
+  <script src="./app.js" type="module"></script>
 </body>
 </html>
+
