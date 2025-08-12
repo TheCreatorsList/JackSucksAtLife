@@ -14,3 +14,4 @@ a.chan { display: flex; gap: 12px; align-items: center; color: inherit; text-dec
 .meta .title { font-weight: 600; }
 .meta .handle { opacity: 0.7; font-size: 0.9rem; }
 footer { max-width: 1000px; margin: 0 auto; padding: 16px; opacity: 0.7; }
+
