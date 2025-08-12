@@ -9,7 +9,7 @@ let channels = [];
 let filtered = [];
 let sortAZ = true;
 
-function linkFor(c) {
+function linkFor(c) { 
   if (c.id) return `https://www.youtube.com/channel/${c.id}`;
   if (c.handle) return `https://www.youtube.com/${c.handle.replace(/^\s*@/, "@")}`;
   return "#";
