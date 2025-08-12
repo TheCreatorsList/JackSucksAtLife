@@ -1,5 +1,5 @@
 {
-  "name": "jacksucks-network",
+  "name": "jacksucks-network-scraper",
   "private": true,
   "type": "module",
   "scripts": {
@@ -7,4 +7,3 @@
   },
   "dependencies": {}
 }
-
