@@ -1,6 +1,8 @@
 // scripts/fetch.js
-// Final: Subs from YouTube (/about) ONLY. Views & Videos from Social Blade PROFILE header ONLY.
-// Robust: collect multiple candidates near each SB label, filter against subs, choose max(view) / min(uploads).
+// Channel directory with reliable stats, no API keys.
+// - Subs + lifetime views: YouTube /about (only)
+// - Total videos: YouTube root or /videos (videosCountText/videoCountText)
+// - SB used ONLY as last-resort fallback for videos (Uploads) — never for subs/views.
 
 import fs from "fs/promises";
 import path from "path";
@@ -44,7 +46,6 @@ function normalizeInput(s){
     return t; // legacy /user/... kept as URL
   }catch{ return t; }
 }
-
 function ytBase(x){
   if (/^https?:\/\//i.test(x)) return x.replace(/\/+$/,"");
   if (isHandle(x)) return `https://www.youtube.com/${x}`;
@@ -57,17 +58,15 @@ function withHLGL(u){
   url.searchParams.set("persist_hl","1"); url.searchParams.set("persist_gl","1");
   return url.toString();
 }
-const ytAboutUrl = x => withHLGL(ytBase(x) + "/about");
+const ytAboutUrl  = x => withHLGL(ytBase(x) + "/about");
+const ytRootUrl   = x => withHLGL(ytBase(x));
+const ytVideosUrl = x => withHLGL(ytBase(x) + "/videos");
 
-// Social Blade PROFILE (preferred) and realtime (last resort)
+// Social Blade (videos fallback only)
 const sbMainUrl = x =>
   isHandle(x) ? `https://socialblade.com/youtube/handle/${x.slice(1)}`
   : isId(x)   ? `https://socialblade.com/youtube/channel/${x}`
               : `https://socialblade.com/youtube/handle/${x.replace(/^@/,"")}`;
-const sbRealtimeUrl = x =>
-  isHandle(x) ? `https://socialblade.com/youtube/handle/${x.slice(1)}/realtime`
-  : isId(x)   ? `https://socialblade.com/youtube/channel/${x}/realtime`
-              : `https://socialblade.com/youtube/handle/${x.replace(/^@/,"")}/realtime`;
 
 async function fetchText(url, extraHeaders={}){
   const res = await fetch(url, {
@@ -84,8 +83,8 @@ async function fetchText(url, extraHeaders={}){
   return res.text();
 }
 
-/* ---------- YouTube (/about) for: title, pfp, handle, id, verified, subs ---------- */
-function parseYouTubeAbout(html){
+/* ---------- YouTube parsing ---------- */
+function parseBasics(html){
   const title =
     ex(html, /<meta property="og:title" content="([^"]+)"/) ||
     ex(html, /"title"\s*:\s*\{"simpleText"\s*:\s*"([^"]+)"\}/) || "";
@@ -105,21 +104,72 @@ function parseYouTubeAbout(html){
     /"metadataBadgeRenderer"\s*:\s*\{[^}]*"style"\s*:\s*"BADGE_STYLE_TYPE_VERIFIED"/i.test(html) ||
     /"tooltip"\s*:\s*"Verified"/i.test(html);
 
+  return { title, pfp, handle, id, verified };
+}
+
+function parseAboutCounts(html){
+  // Strictly from /about
   const subsTxt =
     ex(html, /"subscriberCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
     ex(html, /"subscriberCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
-  const subs = subsTxt ? parseCount(subsTxt.replace(/[^0-9KMB.,]/g,"")) : null;
+  const subs  = subsTxt ? parseCount(subsTxt.replace(/[^0-9KMB.,]/g,"")) : null;
 
-  return { title, pfp, handle, id, verified, subs };
+  const viewsTxt =
+    ex(html, /"viewCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
+    ex(html, /"viewCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
+  const views = viewsTxt ? parseCount(viewsTxt.replace(/[^0-9KMB.,]/g,"")) : null;
+
+  return { subs, views };
 }
-async function getYouTubeBasics(x, attempt=1){
-  try{ const html = await fetchText(ytAboutUrl(x)); return parseYouTubeAbout(html); }
-  catch(e){ if (attempt<3){ await sleep(800*attempt); return getYouTubeBasics(x, attempt+1); }
-    return { title:"", pfp:"", handle:isHandle(x)?x:"", id:isId(x)?x:null, verified:false, subs:null };
+
+function parseVideosCount(html){
+  // YouTube may use either "videosCountText" or "videoCountText"
+  const vidsTxt =
+    ex(html, /"videosCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
+    ex(html, /"videosCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/) ||
+    ex(html, /"videoCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
+    ex(html, /"videoCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
+  const videos = vidsTxt ? parseCount(vidsTxt.replace(/[^0-9KMB.,]/g,"")) : null;
+  return { videos };
+}
+
+async function getYouTubeAll(x){
+  let basics = {};
+  let subs = null, views = null, videos = null;
+
+  // 1) /about → subs + views + basics
+  try{
+    const aboutHTML = await fetchText(ytAboutUrl(x));
+    basics = { ...basics, ...parseBasics(aboutHTML) };
+    const c = parseAboutCounts(aboutHTML);
+    subs  = c.subs ?? subs;
+    views = c.views ?? views;
+  }catch{}
+
+  // 2) root → videos
+  if (videos == null){
+    try{
+      const rootHTML = await fetchText(ytRootUrl(x));
+      basics = { ...basics, ...parseBasics(rootHTML) };
+      const v = parseVideosCount(rootHTML);
+      videos = v.videos ?? videos;
+    }catch{}
   }
+
+  // 3) /videos → videos (backup)
+  if (videos == null){
+    try{
+      const vidsHTML = await fetchText(ytVideosUrl(x));
+      basics = { ...basics, ...parseBasics(vidsHTML) };
+      const v = parseVideosCount(vidsHTML);
+      videos = v.videos ?? videos;
+    }catch{}
+  }
+
+  return { ...basics, subs, views, videos };
 }
 
-/* ---------- Social Blade PROFILE parsing (views/uploads) ---------- */
+/* ---------- Social Blade (videos fallback only) ---------- */
 function stripToText(html){
   return html
     .replace(/<script[\s\S]*?<\/script>/gi," ")
@@ -133,60 +183,21 @@ function numbersNearLabel(text, label, windowSize){
   if (i < 0) return [];
   const slice = text.slice(i, i + windowSize);
   const out = new Set();
-
-  (slice.match(/\b\d+(?:\.\d+)?\s*[KMB]\b/gi) || []).forEach(s=>{
-    const n = parseCount(s); if (n!=null) out.add(n);
-  });
-  (slice.match(/\b\d{1,3}(?:[,\s]\d{3}){1,7}\b/g) || []).forEach(s=>{
-    const n = parseCount(s); if (n!=null) out.add(n);
-  });
-  (slice.match(/\b\d{2,}\b/g) || []).forEach(s=>{
-    const n = parseCount(s); if (n!=null) out.add(n);
-  });
-
+  (slice.match(/\b\d+(?:\.\d+)?\s*[KMB]\b/gi)||[]).forEach(s=>{ const n=parseCount(s); if(n!=null) out.add(n);});
+  (slice.match(/\b\d{1,3}(?:[,\s]\d{3}){1,7}\b/g)||[]).forEach(s=>{ const n=parseCount(s); if(n!=null) out.add(n);});
+  (slice.match(/\b\d{2,}\b/g)||[]).forEach(s=>{ const n=parseCount(s); if(n!=null) out.add(n);});
   return Array.from(out);
 }
-
-async function parseSBProfile(html, knownSubs){
-  const text = stripToText(html);
-
-  // Candidates close to the header labels
-  let vidsC = numbersNearLabel(text, "Uploads", 200);
-  let viewsC = numbersNearLabel(text, "Video Views", 220);
-
-  if (vidsC.length === 0)  vidsC  = numbersNearLabel(text, "videos", 200);
-  if (viewsC.length === 0) viewsC = numbersNearLabel(text, "views", 220);
-
-  // Filter against subs confusion and ranges
-  const subs = knownSubs || null;
-
-  vidsC  = vidsC.filter(n => n >= 0 && n <= 1_000_000 && !(subs && n === subs && subs > 1000));
-  viewsC = viewsC.filter(n => n >= 1_000 && !(subs && n === subs && subs > 1000));
-
-  // Decide: uploads = MIN candidate; views = MAX candidate
-  const videos = vidsC.length ? Math.min(...vidsC) : null;
-  const views  = viewsC.length ? Math.max(...viewsC) : null;
-
-  return { videos, views };
-}
-
-async function getSBCounts(x, knownSubs, attempt=1){
+async function getSBVideosFallback(x){
   try{
     const html = await fetchText(sbMainUrl(x), { referer: "https://socialblade.com/" });
-    let { videos, views } = await parseSBProfile(html, knownSubs);
-    if (videos == null || views == null){
-      try{
-        const rhtml = await fetchText(sbRealtimeUrl(x), { referer: "https://socialblade.com/" });
-        const r = await parseSBProfile(rhtml, knownSubs);
-        videos = videos ?? r.videos;
-        views  = views  ?? r.views;
-      }catch{}
-    }
-    return { videos, views };
-  }catch(e){
-    if (attempt < 2){ await sleep(1200*attempt); return getSBCounts(x, knownSubs, attempt+1); }
-    return { videos:null, views:null };
-  }
+    const text = stripToText(html);
+    let vids = numbersNearLabel(text, "Uploads", 200);
+    if (!vids.length) vids = numbersNearLabel(text, "videos", 200);
+    // plausible uploads range
+    vids = vids.filter(n => n >= 0 && n <= 1_000_000);
+    return vids.length ? Math.min(...vids) : null;
+  }catch{ return null; }
 }
 
 /* ---------- main ---------- */
@@ -197,18 +208,16 @@ async function main(){
   const rows = [];
   for (let i=0;i<inputs.length;i++){
     const item = inputs[i];
-    if (i>0) await sleep(900 + Math.random()*500); // gentle pacing
+    if (i>0) await sleep(800 + Math.random()*400); // gentle pacing
 
-    // YouTube basics (subs, title, pfp, verified, id/handle)
-    const yt = await getYouTubeBasics(item);
+    // Get YT data
+    const yt = await getYouTubeAll(item);
 
-    // Social Blade for lifetime views & total uploads
-    const sb = await getSBCounts(yt.handle || yt.id || item, yt.subs);
-
-    // Final values (NO SB fallback for subs)
-    const subs   = yt.subs ?? null;     // subs strictly from YT
-    const views  = sb.views ?? null;    // lifetime views from SB
-    const videos = sb.videos ?? null;   // total uploads from SB
+    // Fallback: if videos missing, try SB "Uploads" (never use SB for subs/views)
+    let videos = yt.videos;
+    if (videos == null) {
+      videos = await getSBVideosFallback(yt.handle || yt.id || item);
+    }
 
     rows.push({
       input: item,
@@ -217,11 +226,13 @@ async function main(){
       title: yt.title || yt.handle || yt.id || "Channel",
       pfp: yt.pfp || "",
       verified: !!yt.verified,
-      subs, views, videos,
-      hiddenSubs: subs == null
+      subs: yt.subs ?? null,     // strictly from YT /about
+      views: yt.views ?? null,   // strictly from YT /about
+      videos: videos ?? null,    // from YT; SB only if YT failed
+      hiddenSubs: yt.subs == null
     });
 
-    console.log(`[${i+1}/${inputs.length}] ${rows.at(-1).title} — subs:${subs ?? "?"} views:${views ?? "?"} vids:${videos ?? "?"}`);
+    console.log(`[${i+1}/${inputs.length}] ${rows.at(-1).title} — subs:${yt.subs ?? "?"} views:${yt.views ?? "?"} vids:${videos ?? "?"}`);
   }
 
   // Sort A→Z (frontend can re-sort)
