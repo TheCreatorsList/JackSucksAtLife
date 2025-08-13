@@ -1,6 +1,8 @@
 // scripts/fetch.js
-// Build channel directory with stats (title, handle, id, pfp, verified, subs, videos, views)
-// No API keys. Prefers YouTube (/about, root, /videos); SB profile/realtime only as last fallback.
+// Channel directory with reliable stats (subs from YouTube; views & videos from Social Blade profile)
+// No API keys. YouTube only for: title, handle, id, pfp, verified, subscribers.
+// Social Blade PROFILE header for: lifetime "Video Views" and total "Uploads" (aka videos).
+// Realtime page is a last-resort fallback.
 
 import fs from "fs/promises";
 import path from "path";
@@ -58,7 +60,6 @@ function ytUrlBase(x) {
   if (isId(x)) return `https://www.youtube.com/channel/${x}`;
   return `https://www.youtube.com/@${x.replace(/^@/, "")}`;
 }
-
 function withHLGL(u) {
   const url = new URL(u);
   url.searchParams.set("hl", "en");
@@ -67,12 +68,9 @@ function withHLGL(u) {
   url.searchParams.set("persist_gl", "1");
   return url.toString();
 }
+const ytAboutUrl  = (x) => withHLGL(ytUrlBase(x) + "/about");
 
-const ytAboutUrl = (x) => withHLGL(ytUrlBase(x) + "/about");
-const ytRootUrl = (x) => withHLGL(ytUrlBase(x));
-const ytVideosUrl = (x) => withHLGL(ytUrlBase(x) + "/videos");
-
-// Social Blade: prefer main profile page (stable "Uploads"/"Video Views"). Fallback to /realtime.
+// Social Blade: use PROFILE page (stable “Uploads” + “Video Views” header). Realtime is last resort.
 const sbMainUrl = (x) =>
   isHandle(x)
     ? `https://socialblade.com/youtube/handle/${x.slice(1)}`
@@ -102,9 +100,8 @@ async function fetchText(url, extraHeaders = {}) {
   return res.text();
 }
 
-/* ---------- YouTube parsing ---------- */
-// Title, pfp, handle, id (from any page)
-function parseChannelBasics(html) {
+/* ---------- YouTube (/about) for: title, pfp, handle, id, verified, subscribers ---------- */
+function parseYouTubeAbout(html) {
   const title =
     ex(html, /<meta property="og:title" content="([^"]+)"/) ||
     ex(html, /"title"\s*:\s*\{"simpleText"\s*:\s*"([^"]+)"\}/) ||
@@ -120,140 +117,107 @@ function parseChannelBasics(html) {
     ex(html, /<link rel="canonical" href="https:\/\/www\.youtube\.com\/(@[^"\/]+)\/?"/) ||
     "";
 
-  const id = ex(
-    html,
-    /<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/([A-Za-z0-9_-]{24})/
-  );
+  const id = ex(html, /<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/([A-Za-z0-9_-]{24})/);
 
   const verified =
-    /"metadataBadgeRenderer"\s*:\s*\{[^}]*"style"\s*:\s*"BADGE_STYLE_TYPE_VERIFIED"/i.test(
-      html
-    ) || /"tooltip"\s*:\s*"Verified"/i.test(html);
+    /"metadataBadgeRenderer"\s*:\s*\{[^}]*"style"\s*:\s*"BADGE_STYLE_TYPE_VERIFIED"/i.test(html) ||
+    /"tooltip"\s*:\s*"Verified"/i.test(html);
 
-  return { title, pfp, handle, id, verified };
-}
-
-// Robust count extraction from YouTube HTML JSON blobs
-function parseYouTubeCounts(html) {
-  // Subscribers (if present)
+  // subs only (About page is least noisy for this)
   const subsTxt =
     ex(html, /"subscriberCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
     ex(html, /"subscriberCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
   const subs = subsTxt ? parseCount(subsTxt.replace(/[^0-9KMB.,]/g, "")) : null;
 
-  // Lifetime views (About/Root)
-  const viewsTxt =
-    ex(html, /"viewCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
-    ex(html, /"viewCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
-  const views = viewsTxt ? parseCount(viewsTxt.replace(/[^0-9KMB.,]/g, "")) : null;
-
-  // Total videos: YouTube uses BOTH videoCountText and videosCountText in different places.
-  const vidsTxt =
-    ex(html, /"videoCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
-    ex(html, /"videoCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/) ||
-    ex(html, /"videosCountText"\s*:\s*\{[^}]*"simpleText"\s*:\s*"([^"]+?)"/) ||
-    ex(html, /"videosCountText"\s*:\s*\{[^}]*"runs"\s*:\s*\[\s*\{[^}]*"text"\s*:\s*"([^"]+?)"/);
-  const videos = vidsTxt ? parseCount(vidsTxt.replace(/[^0-9KMB.,]/g, "")) : null;
-
-  return { subs, views, videos };
+  return { title, pfp, handle, id, verified, subs };
 }
 
-async function getYouTubeAll(x) {
-  // Try about → root → videos until we fill everything
-  let basic = {};
-  let subs = null, views = null, videos = null;
-
-  // 1) About
+async function getYouTubeBasics(x, attempt = 1) {
   try {
     const html = await fetchText(ytAboutUrl(x));
-    basic = { ...parseChannelBasics(html), ...basic };
-    const c = parseYouTubeCounts(html);
-    subs = subs ?? c.subs;
-    views = views ?? c.views;
-    videos = videos ?? c.videos;
-  } catch { /* ignore */ }
-
-  // 2) Root
-  if (subs == null || views == null || videos == null) {
-    try {
-      const html = await fetchText(ytRootUrl(x));
-      basic = { ...basic, ...parseChannelBasics(html) };
-      const c = parseYouTubeCounts(html);
-      subs = subs ?? c.subs;
-      views = views ?? c.views;
-      videos = videos ?? c.videos;
-    } catch { /* ignore */ }
+    return parseYouTubeAbout(html);
+  } catch (e) {
+    if (attempt < 3) {
+      await sleep(800 * attempt);
+      return getYouTubeBasics(x, attempt + 1);
+    }
+    return {
+      title: "",
+      pfp: "",
+      handle: isHandle(x) ? x : "",
+      id: isId(x) ? x : null,
+      verified: false,
+      subs: null,
+    };
   }
-
-  // 3) /videos
-  if (videos == null) {
-    try {
-      const html = await fetchText(ytVideosUrl(x));
-      basic = { ...basic, ...parseChannelBasics(html) };
-      const c = parseYouTubeCounts(html);
-      videos = videos ?? c.videos;
-      // views/subs rarely present here, but fill if found
-      subs = subs ?? c.subs;
-      views = views ?? c.views;
-    } catch { /* ignore */ }
-  }
-
-  return { ...basic, subs, views, videos };
 }
 
-/* ---------- SocialBlade helpers (profile-first, realtime fallback) ---------- */
-// Prefer K/M/B forms, then grouped ints, then plain big ints (>=4 digits).
-function pickBestNumberAfter(html, label) {
+/* ---------- SocialBlade PROFILE parsing for lifetime views & total uploads ---------- */
+// Prefer exact header labels. If missing (handle vs channel pages differ), also accept plain "views"/"videos" near the header block.
+// Avoid the daily tables by restricting the scan window to the first big header section.
+
+function pickBestNumberAfter(html, label, windowSize = 3000) {
   const i = html.toLowerCase().indexOf(label.toLowerCase());
   if (i < 0) return null;
-  const slice = html.slice(i, i + 2500);
+  const slice = html.slice(i, i + windowSize);
+  // 1) suffixed like "4.62M"
   const suffixed = slice.match(/\b(\d+(?:\.\d+)?\s*[KMB])\b/gi);
   if (suffixed && suffixed[0]) return parseCount(suffixed[0]);
+  // 2) grouped integers "1,110,686,437" (allow spaces)
   const grouped = slice.match(/\b(\d{1,3}(?:[,\s]\d{3}){1,7})\b/g);
   if (grouped && grouped[0]) return parseCount(grouped[0]);
+  // 3) plain big ints
   const plain = slice.match(/\b(\d{4,})\b/);
   if (plain && plain[1]) return parseCount(plain[1]);
   return null;
 }
 
-async function getSBFromProfile(x) {
+async function getSBProfileCounts(x) {
   const html = await fetchText(sbMainUrl(x), { referer: "https://socialblade.com/" });
-  const uploads = pickBestNumberAfter(html, "Uploads");
-  const subs = pickBestNumberAfter(html, "Subscribers");
-  const views = pickBestNumberAfter(html, "Video Views");
-  return { uploads, subs, views };
+
+  // Try canonical labels first
+  let uploads = pickBestNumberAfter(html, "Uploads", 4000);
+  let views   = pickBestNumberAfter(html, "Video Views", 4000);
+
+  // Handle pages sometimes show simple "videos" / "views" in the header block
+  if (uploads == null) uploads = pickBestNumberAfter(html, "videos", 3000);
+  if (views   == null) views   = pickBestNumberAfter(html, "views", 3000);
+
+  return { uploads, views };
 }
 
-async function getSBFromRealtime(x) {
+async function getSBRealtimeCounts(x) {
   const html = await fetchText(sbRealtimeUrl(x), { referer: "https://socialblade.com/" });
-  const videos = pickBestNumberAfter(html, "Videos") ?? pickBestNumberAfter(html, "Uploads");
-  const subs = pickBestNumberAfter(html, "Subscribers");
-  const views = pickBestNumberAfter(html, "Video Views");
-  return { uploads: videos, subs, views };
+  // Some realtime pages say "Videos", others say "Uploads"; try both.
+  const uploads = pickBestNumberAfter(html, "Videos", 3000) ?? pickBestNumberAfter(html, "Uploads", 3000);
+  const views   = pickBestNumberAfter(html, "Video Views", 3000) ?? pickBestNumberAfter(html, "views", 3000);
+  return { uploads, views };
 }
 
 async function getSBCounts(x, attempt = 1) {
   try {
-    const p = await getSBFromProfile(x);
-    if (p.uploads == null || p.subs == null || p.views == null) {
+    // 1) Profile page (preferred)
+    const p = await getSBProfileCounts(x);
+    // 2) If missing, patch from realtime
+    if (p.uploads == null || p.views == null) {
       try {
-        const r = await getSBFromRealtime(x);
+        const r = await getSBRealtimeCounts(x);
         p.uploads = p.uploads ?? r.uploads;
-        p.subs = p.subs ?? r.subs;
-        p.views = p.views ?? r.views;
+        p.views   = p.views   ?? r.views;
       } catch { /* ignore */ }
     }
-    return { subs: p.subs ?? null, videos: p.uploads ?? null, views: p.views ?? null };
+    return { videos: p.uploads ?? null, views: p.views ?? null };
   } catch (e) {
+    // Retry once, then try realtime-only
     if (attempt < 2) {
       await sleep(1200 * attempt);
       return getSBCounts(x, attempt + 1);
     }
     try {
-      const r = await getSBFromRealtime(x);
-      return { subs: r.subs ?? null, videos: r.uploads ?? null, views: r.views ?? null };
+      const r = await getSBRealtimeCounts(x);
+      return { videos: r.uploads ?? null, views: r.views ?? null };
     } catch {
-      return { subs: null, videos: null, views: null };
+      return { videos: null, views: null };
     }
   }
 }
@@ -268,19 +232,16 @@ async function main() {
     const item = inputs[i];
     if (i > 0) await sleep(900 + Math.random() * 500); // gentle pacing
 
-    // Try YouTube (about + root + videos)
-    let yt = await getYouTubeAll(item);
+    // 1) YouTube basics (subs, title, pfp, verified, id/handle)
+    const yt = await getYouTubeBasics(item);
 
-    // Fill gaps with Social Blade (Uploads → videos, Video Views → views)
-    let { subs, views, videos } = yt;
-    if (subs == null || views == null || videos == null) {
-      const sb = await getSBCounts(yt.handle || yt.id || item);
-      subs = subs ?? sb.subs;
-      views = views ?? sb.views;
-      videos = videos ?? sb.videos;
-    }
+    // 2) Social Blade for lifetime views and total uploads
+    const sb = await getSBCounts(yt.handle || yt.id || item);
 
-    // Build row
+    const subs = yt.subs;
+    const views = sb.views;     // lifetime
+    const videos = sb.videos;   // total uploads
+
     rows.push({
       input: item,
       id: yt.id || (isId(item) ? item : null),
@@ -289,8 +250,8 @@ async function main() {
       pfp: yt.pfp || "",
       verified: !!yt.verified,
       subs,
-      views,   // lifetime
-      videos,  // total uploads
+      views,
+      videos,
       hiddenSubs: subs == null,
     });
 
@@ -299,7 +260,7 @@ async function main() {
     );
   }
 
-  // Sort A→Z (frontend can still re-sort)
+  // A→Z sort (frontend can still re-sort)
   rows.sort((a, b) =>
     (a.title || a.handle || a.id || "").localeCompare(
       b.title || b.handle || b.id || "",
