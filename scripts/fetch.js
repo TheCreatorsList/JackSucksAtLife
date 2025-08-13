@@ -1,6 +1,7 @@
 // scripts/fetch.js
-// Subs from YouTube (/about); Views & Videos from Social Blade PROFILE header (Uploads / Video Views).
-// Robust, no API keys.
+// Subs from YouTube (/about). Views & Videos from Social Blade PROFILE header only,
+// using tight HTML-anchored patterns (won't pick up the subs value).
+// No API keys.
 
 import fs from "fs/promises";
 import path from "path";
@@ -76,8 +77,7 @@ async function fetchText(url, extraHeaders={}){
       "user-agent": UA,
       "accept-language": LANG,
       "accept": "text/html,*/*",
-      // helps skip YT consent interstitial on server side
-      cookie: "CONSENT=YES+1",
+      cookie: "CONSENT=YES+1", // skip YT consent interstitial
       ...extraHeaders
     }
   });
@@ -121,81 +121,66 @@ async function getYouTubeBasics(x, attempt=1){
 }
 
 /* ---------- Social Blade PROFILE: “Uploads” (videos) & “Video Views” (lifetime) ---------- */
+// HTML-anchored: look for the label text, then the first number within a tight window (so we don't hit "Subscribers").
 
-// Turn HTML into a flat text flow so label→number proximity is reliable
-function stripToText(html){
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi," ")
-    .replace(/<style[\s\S]*?<\/style>/gi," ")
-    .replace(/<[^>]+>/g," ")
-    .replace(/\s+/g," ")
-    .trim();
+function escapeRe(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+// Find a number in the HTML within N non-digit/KMB characters after a label
+function numberAfterLabelHTML(html, label, maxGap = 100){
+  const re = new RegExp(
+    escapeRe(label) + `(?:[^0-9KMB]{0,${maxGap}})(\\d[\\d,\\s.]*\\s*[KMB]?)`,
+    "i"
+  );
+  const m = html.match(re);
+  return m ? parseCount(m[1]) : null;
 }
 
-// Find the FIRST good-looking number within N characters AFTER the label in PLAIN TEXT.
-function numberNearLabelText(text, label, windowSize=160){
-  const i = text.toLowerCase().indexOf(label.toLowerCase());
-  if (i < 0) return null;
-  const slice = text.slice(i, i + windowSize);
+async function getSBProfileCounts(html, knownSubs){
+  // Canonical labels in header
+  let videos = numberAfterLabelHTML(html, "Uploads", 120);
+  let views  = numberAfterLabelHTML(html, "Video Views", 120);
 
-  // Prefer suffixed K/M/B, then grouped 1,234,567, then plain >=4 digits
-  const suff = slice.match(/\b(\d+(?:\.\d+)?\s*[KMB])\b/i);
-  if (suff) return parseCount(suff[1]);
-  const grp = slice.match(/\b(\d{1,3}(?:[,\s]\d{3}){1,7})\b/);
-  if (grp) return parseCount(grp[1]);
-  const plain = slice.match(/\b(\d{4,})\b/);
-  if (plain) return parseCount(plain[1]);
-  return null;
+  // Some handle pages show simple "videos"/"views" near header
+  if (videos == null) videos = numberAfterLabelHTML(html, "videos", 120);
+  if (views  == null) views  = numberAfterLabelHTML(html, "views", 120);
+
+  // Heuristics to avoid mis-grabs:
+  // - uploads shouldn't equal subs when subs is large
+  // - uploads shouldn't be absurdly large
+  if (videos != null) {
+    if (knownSubs && videos === knownSubs && knownSubs > 1000) videos = null;
+    if (videos > 1_000_000) videos = null;
+  }
+  // - views shouldn't equal subs if subs is big (classic mis-grab)
+  if (views != null && knownSubs && views === knownSubs && knownSubs > 1000) views = null;
+
+  return { videos, views };
 }
 
-async function getSBProfileCounts(x){
-  const html = await fetchText(sbMainUrl(x), { referer: "https://socialblade.com/" });
-  const text = stripToText(html);
-
-  // Canonical header labels
-  let videos = numberNearLabelText(text, "Uploads", 160);
-  let views  = numberNearLabelText(text, "Video Views", 160);
-
-  // Some pages show lowercase variants
-  if (videos == null) videos = numberNearLabelText(text, "videos", 160);
-  if (views  == null) views  = numberNearLabelText(text, "views", 160);
-
-  // Heuristic: uploads shouldn't be insanely large; if > 1,000,000 it's probably wrong.
-  if (videos != null && videos > 1_000_000) videos = null;
-
-  // Also read subscribers as an emergency fallback (we still prefer YT for subs)
-  const subs = numberNearLabelText(text, "Subscribers", 160);
-
-  return { videos, views, subs };
-}
-
-// Last-resort realtime page (labels vary)
-async function getSBRealtimeCounts(x){
-  const html = await fetchText(sbRealtimeUrl(x), { referer: "https://socialblade.com/" });
-  const text = stripToText(html);
-  let videos = numberNearLabelText(text, "Videos", 200) ?? numberNearLabelText(text, "Uploads", 200);
-  let views  = numberNearLabelText(text, "Video Views", 200) ?? numberNearLabelText(text, "views", 200);
-  if (videos != null && videos > 1_000_000) videos = null;
-  const subs = numberNearLabelText(text, "Subscribers", 200);
-  return { videos, views, subs };
-}
-
-async function getSBCounts(x, attempt=1){
+async function getSBCounts(x, knownSubs, attempt=1){
   try{
-    const p = await getSBProfileCounts(x);
+    const html = await fetchText(sbMainUrl(x), { referer: "https://socialblade.com/" });
+    let p = await getSBProfileCounts(html, knownSubs);
+
+    // If still missing, try realtime page (last resort)
     if (p.videos == null || p.views == null){
       try{
-        const r = await getSBRealtimeCounts(x);
-        p.videos = p.videos ?? r.videos;
-        p.views  = p.views  ?? r.views;
-        // subs kept just as an emergency fallback
-        p.subs   = p.subs   ?? r.subs;
+        const rhtml = await fetchText(sbRealtimeUrl(x), { referer: "https://socialblade.com/" });
+        // Reuse the same anchored extractor against realtime HTML (labels exist there too)
+        p.videos = p.videos ?? numberAfterLabelHTML(rhtml, "Videos", 120) ?? numberAfterLabelHTML(rhtml, "Uploads", 120);
+        p.views  = p.views  ?? numberAfterLabelHTML(rhtml, "Video Views", 120) ?? numberAfterLabelHTML(rhtml, "views", 120);
+
+        if (p.videos != null) {
+          if (knownSubs && p.videos === knownSubs && knownSubs > 1000) p.videos = null;
+          if (p.videos > 1_000_000) p.videos = null;
+        }
+        if (p.views != null && knownSubs && p.views === knownSubs && knownSubs > 1000) p.views = null;
       }catch{}
     }
     return p;
   }catch(e){
-    if (attempt < 2){ await sleep(1200*attempt); return getSBCounts(x, attempt+1); }
-    try{ return await getSBRealtimeCounts(x); } catch { return { videos:null, views:null, subs:null }; }
+    if (attempt < 2){ await sleep(1200*attempt); return getSBCounts(x, knownSubs, attempt+1); }
+    return { videos:null, views:null };
   }
 }
 
@@ -209,16 +194,15 @@ async function main(){
     const item = inputs[i];
     if (i>0) await sleep(900 + Math.random()*500); // gentle pacing
 
-    // YouTube basics (subs, title, pfp, verified, id/handle)
+    // 1) YouTube basics (subs, title, pfp, verified, id/handle)
     const yt = await getYouTubeBasics(item);
 
-    // Social Blade for lifetime views & total uploads
-    const sb = await getSBCounts(yt.handle || yt.id || item);
+    // 2) Social Blade for lifetime views & total uploads (anchored parsing, with subs-aware guards)
+    const sb = await getSBCounts(yt.handle || yt.id || item, yt.subs);
 
-    // Final values
-    const subs   = yt.subs ?? sb.subs ?? null;   // prefer YT; SB only if YT failed
-    const views  = sb.views ?? null;             // PROFILE "Video Views" only
-    const videos = sb.videos ?? null;            // PROFILE "Uploads" only
+    const subs   = yt.subs ?? null;       // subs only from YT
+    const views  = sb.views ?? null;      // lifetime
+    const videos = sb.videos ?? null;     // total uploads
 
     rows.push({
       input: item,
@@ -234,7 +218,7 @@ async function main(){
     console.log(`[${i+1}/${inputs.length}] ${rows.at(-1).title} — subs:${subs ?? "?"} views:${views ?? "?"} vids:${videos ?? "?"}`);
   }
 
-  // Sort A→Z (frontend can re-sort)
+  // Sort A→Z
   rows.sort((a,b)=> (a.title||a.handle||a.id||"").localeCompare(b.title||b.handle||b.id||"", undefined, {sensitivity:"base"}));
 
   await fs.mkdir(outDir,{recursive:true});
