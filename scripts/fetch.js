@@ -1,6 +1,6 @@
 // scripts/fetch.js
-// Subs from YouTube (/about, fallback SB). Views & Videos from Social Blade PROFILE header.
-// Robust: collect multiple candidates near the label, then choose (max for views, min for uploads).
+// Final: Subs from YouTube (/about) ONLY. Views & Videos from Social Blade PROFILE header ONLY.
+// Robust: collect multiple candidates near each SB label, filter against subs, choose max(view) / min(uploads).
 
 import fs from "fs/promises";
 import path from "path";
@@ -119,8 +119,7 @@ async function getYouTubeBasics(x, attempt=1){
   }
 }
 
-/* ---------- Social Blade PROFILE parsing ---------- */
-// Convert HTML to plain text flow (remove tags/scripts/styles)
+/* ---------- Social Blade PROFILE parsing (views/uploads) ---------- */
 function stripToText(html){
   return html
     .replace(/<script[\s\S]*?<\/script>/gi," ")
@@ -129,84 +128,64 @@ function stripToText(html){
     .replace(/\s+/g," ")
     .trim();
 }
-
-// Return ALL numeric candidates near a label in TEXT (tight window)
 function numbersNearLabel(text, label, windowSize){
   const i = text.toLowerCase().indexOf(label.toLowerCase());
   if (i < 0) return [];
   const slice = text.slice(i, i + windowSize);
+  const out = new Set();
 
-  const cands = new Set();
-
-  // 1) suffixed (K/M/B)
-  (slice.match(/\b\d+(?:\.\d+)?\s*[KMB]\b/gi) || []).forEach(s => {
-    const n = parseCount(s); if (n != null) cands.add(n);
+  (slice.match(/\b\d+(?:\.\d+)?\s*[KMB]\b/gi) || []).forEach(s=>{
+    const n = parseCount(s); if (n!=null) out.add(n);
+  });
+  (slice.match(/\b\d{1,3}(?:[,\s]\d{3}){1,7}\b/g) || []).forEach(s=>{
+    const n = parseCount(s); if (n!=null) out.add(n);
+  });
+  (slice.match(/\b\d{2,}\b/g) || []).forEach(s=>{
+    const n = parseCount(s); if (n!=null) out.add(n);
   });
 
-  // 2) grouped 1,234,567 (comma or space)
-  (slice.match(/\b\d{1,3}(?:[,\s]\d{3}){1,7}\b/g) || []).forEach(s => {
-    const n = parseCount(s); if (n != null) cands.add(n);
-  });
-
-  // 3) plain integers (>=2 digits to avoid stray "1")
-  (slice.match(/\b\d{2,}\b/g) || []).forEach(s => {
-    const n = parseCount(s); if (n != null) cands.add(n);
-  });
-
-  return Array.from(cands);
+  return Array.from(out);
 }
 
 async function parseSBProfile(html, knownSubs){
   const text = stripToText(html);
 
-  // Tight windows right after the header labels
-  let vidsCands  = numbersNearLabel(text, "Uploads", 200);
-  let viewsCands = numbersNearLabel(text, "Video Views", 220);
+  // Candidates close to the header labels
+  let vidsC = numbersNearLabel(text, "Uploads", 200);
+  let viewsC = numbersNearLabel(text, "Video Views", 220);
 
-  // Some pages use lower-case variants near header
-  if (vidsCands.length === 0)  vidsCands  = numbersNearLabel(text, "videos", 200);
-  if (viewsCands.length === 0) viewsCands = numbersNearLabel(text, "views", 220);
+  if (vidsC.length === 0)  vidsC  = numbersNearLabel(text, "videos", 200);
+  if (viewsC.length === 0) viewsC = numbersNearLabel(text, "views", 220);
 
-  // Subscribers as fallback (for when YT subs didn't parse)
-  let subsCands = numbersNearLabel(text, "Subscribers", 200);
+  // Filter against subs confusion and ranges
+  const subs = knownSubs || null;
 
-  // Filter out bad candidates:
-  const subs = knownSubs ?? (subsCands.length ? Math.max(...subsCands) : null);
+  vidsC  = vidsC.filter(n => n >= 0 && n <= 1_000_000 && !(subs && n === subs && subs > 1000));
+  viewsC = viewsC.filter(n => n >= 1_000 && !(subs && n === subs && subs > 1000));
 
-  // For uploads: plausible range [0..1e6], and definitely not equal to subs (when subs is big)
-  vidsCands = vidsCands.filter(n => n >= 0 && n <= 1_000_000 && !(subs && n === subs && subs > 1000));
-  // For views: should be large (>= 1k). Remove values equal to subs as a guard.
-  viewsCands = viewsCands.filter(n => n >= 1000 && !(subs && n === subs && subs > 1000));
+  // Decide: uploads = MIN candidate; views = MAX candidate
+  const videos = vidsC.length ? Math.min(...vidsC) : null;
+  const views  = viewsC.length ? Math.max(...viewsC) : null;
 
-  // Choose: uploads = MIN candidate; views = MAX candidate (lifetime total is biggest near the header)
-  const videos = vidsCands.length ? Math.min(...vidsCands) : null;
-  const views  = viewsCands.length ? Math.max(...viewsCands) : null;
-
-  // Subs fallback (only if YT failed)
-  const subsFallback = (subs && !knownSubs) ? subs : null;
-
-  return { videos, views, subsFallback };
+  return { videos, views };
 }
 
 async function getSBCounts(x, knownSubs, attempt=1){
   try{
     const html = await fetchText(sbMainUrl(x), { referer: "https://socialblade.com/" });
-    let { videos, views, subsFallback } = await parseSBProfile(html, knownSubs);
-
+    let { videos, views } = await parseSBProfile(html, knownSubs);
     if (videos == null || views == null){
-      // Try realtime page if profile parsing didn’t yield both
       try{
         const rhtml = await fetchText(sbRealtimeUrl(x), { referer: "https://socialblade.com/" });
         const r = await parseSBProfile(rhtml, knownSubs);
         videos = videos ?? r.videos;
         views  = views  ?? r.views;
-        subsFallback = subsFallback ?? r.subsFallback;
       }catch{}
     }
-    return { videos, views, subsFallback };
+    return { videos, views };
   }catch(e){
     if (attempt < 2){ await sleep(1200*attempt); return getSBCounts(x, knownSubs, attempt+1); }
-    return { videos:null, views:null, subsFallback:null };
+    return { videos:null, views:null };
   }
 }
 
@@ -220,15 +199,16 @@ async function main(){
     const item = inputs[i];
     if (i>0) await sleep(900 + Math.random()*500); // gentle pacing
 
-    // 1) YouTube basics (subs, title, pfp, verified, id/handle)
+    // YouTube basics (subs, title, pfp, verified, id/handle)
     const yt = await getYouTubeBasics(item);
 
-    // 2) Social Blade for lifetime views & total uploads (with candidate selection)
+    // Social Blade for lifetime views & total uploads
     const sb = await getSBCounts(yt.handle || yt.id || item, yt.subs);
 
-    const subs   = yt.subs ?? sb.subsFallback ?? null;  // prefer YT, fallback SB
-    const views  = sb.views ?? null;                    // lifetime
-    const videos = sb.videos ?? null;                   // total uploads
+    // Final values (NO SB fallback for subs)
+    const subs   = yt.subs ?? null;     // subs strictly from YT
+    const views  = sb.views ?? null;    // lifetime views from SB
+    const videos = sb.videos ?? null;   // total uploads from SB
 
     rows.push({
       input: item,
