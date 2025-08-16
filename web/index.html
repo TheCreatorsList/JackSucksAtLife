@@ -26,6 +26,131 @@
 
   <footer class="wrap muted">
     <p>Auto-updated on GitHub Pages • No sign-in, no API.</p>
+    
+<div class="footer-cta">
+  <a class="fx-btn btn-github" href="https://github.com/T3chieJack" target="_blank" rel="noopener" aria-label="Open GitHub">
+    <!-- Octocat -->
+    <svg aria-hidden="true" viewBox="0 0 16 16" width="20" height="20" class="icon">
+      <path fill="currentColor" d="M8 .2a8 8 0 0 0-2.53 15.6c.4.07.55-.17.55-.38v-1.33c-2.25.49-2.73-1.08-2.73-1.08-.36-.9-.89-1.15-.89-1.15-.73-.5.06-.49.06-.49.8.06 1.22.82 1.22.82.72 1.23 1.9.88 2.36.67.07-.52.28-.88.5-1.08C4.85 10.6 2.95 9.95 2.95 7.1c0-.87.31-1.58.82-2.14-.08-.2-.36-1.01.08-2.1 0 0 .68-.22 2.23.82A7.7 7.7 0 0 1 8 3.25c.69 0 1.39.09 2.04.26 1.55-1.04 2.22-.82 2.22-.82.45 1.09.17 1.9.09 2.1.51.56.82 1.27.82 2.14 0 2.86-1.9 3.49-3.7 3.67.29.25.54.74.54 1.5v2.22c0 .21.15.45.55.38A8 8 0 0 0 8 .2Z"/>
+    </svg>
+    <span>GitHub</span>
+  </a>
+
+  <a class="fx-btn btn-creators" href="https://channellists.github.io/Creators/" aria-label="Open Creators Hub">
+    <!-- Tiny car -->
+    <span class="car-wrap" aria-hidden="true">
+      <svg class="car" width="28" height="14" viewBox="0 0 56 28">
+        <g fill="currentColor">
+          <rect x="6" y="10" width="34" height="8" rx="3"></rect>
+          <path d="M40 10c5 0 10 2 12 6H40z"></path>
+        </g>
+        <g class="wheel" transform="translate(16,22)">
+          <circle r="4" fill="currentColor"></circle>
+          <circle r="2" fill="#0b0f1a"></circle>
+        </g>
+        <g class="wheel" transform="translate(36,22)">
+          <circle r="4" fill="currentColor"></circle>
+          <circle r="2" fill="#0b0f1a"></circle>
+        </g>
+      </svg>
+    </span>
+    <span>Creators</span>
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" class="icon arrow">
+      <path fill="currentColor" d="M13.5 5l1.4 1.4-4.1 4.1H20v2H10.8l4.1 4.1-1.4 1.4L6.9 12z"/>
+    </svg>
+  </a>
+
+  <style>
+    /* Scoped variables */
+    .footer-cta{
+      --bg1: rgba(124,92,255,.25);
+      --bg2: rgba(56,189,248,.25);
+      --ring: rgba(124,92,255,.55);
+      --text: #e6e8f0;
+      --muted: #9aa3b2;
+
+      display:flex; gap:12px; justify-content:center; flex-wrap:wrap;
+      margin:18px 0 6px;
+    }
+
+    /* Base button */
+    .footer-cta .fx-btn{
+      position:relative; display:inline-flex; align-items:center; gap:10px;
+      padding:10px 14px; border-radius:12px; font-weight:800; letter-spacing:.2px;
+      color:var(--text); text-decoration:none; border:1px solid rgba(255,255,255,.12);
+      background: linear-gradient(135deg, var(--bg1), var(--bg2));
+      backdrop-filter: blur(8px);
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      transition: transform .12s ease, box-shadow .12s ease, background .3s ease;
+      isolation:isolate; overflow:hidden;
+    }
+    .footer-cta .fx-btn .icon{ opacity:.95 }
+    .footer-cta .fx-btn:hover{
+      transform: translateY(-1px);
+      box-shadow: 0 16px 36px rgba(0,0,0,.45);
+    }
+    .footer-cta .fx-btn:active{ transform: translateY(0) }
+
+    /* Animated glow ring */
+    .footer-cta .fx-btn::before{
+      content:""; position:absolute; inset:-1px; z-index:-1; border-radius:14px;
+      background: conic-gradient(from 0deg, #7c5cff, #38bdf8, #7c5cff);
+      filter: blur(10px); opacity:.65; animation: footer_spin 6s linear infinite;
+    }
+    @keyframes footer_spin { to { transform: rotate(1turn); } }
+
+    /* Inner shine */
+    .footer-cta .fx-btn::after{
+      content:""; position:absolute; inset:0; border-radius:12px; pointer-events:none;
+      background:
+        radial-gradient(120% 120% at -20% -50%, rgba(255,255,255,.18), transparent 45%),
+        radial-gradient(140% 140% at 120% 20%, rgba(255,255,255,.08), transparent 50%);
+      mix-blend-mode: screen; opacity:.9;
+    }
+
+    /* Focus ring */
+    .footer-cta .fx-btn:focus-visible{
+      outline: none;
+      box-shadow: 0 0 0 6px var(--ring) inset, 0 12px 28px rgba(0,0,0,.4);
+    }
+
+    /* prefers-reduced-motion */
+    @media (prefers-reduced-motion: reduce){
+      .footer-cta .fx-btn::before{ animation: none }
+      .footer-cta .btn-creators .car,
+      .footer-cta .btn-creators .wheel{ animation: none !important }
+    }
+
+    /* GitHub theme */
+    .footer-cta .btn-github{
+      --bg1: rgba(23,23,23,.55);
+      --bg2: rgba(60,60,60,.35);
+    }
+    .footer-cta .btn-github:hover{ box-shadow: 0 0 0 6px rgba(124,92,255,.45) inset }
+
+    /* Creators button (car drive) */
+    .footer-cta .btn-creators{
+      --bg1: rgba(56,189,248,.22);
+      --bg2: rgba(124,92,255,.22);
+      overflow:hidden;
+    }
+    .footer-cta .btn-creators .arrow{ transition: transform .12s ease }
+    .footer-cta .btn-creators:hover .arrow{ transform: translateX(2px) }
+
+    .footer-cta .car-wrap{ position:relative; width:28px; height:14px; overflow:visible }
+    .footer-cta .btn-creators .car{ display:block; color:var(--text); transform: translateX(-110%) }
+    .footer-cta .btn-creators:hover .car{ animation: footer_drive 1.6s ease-out forwards }
+    .footer-cta .btn-creators .wheel{ transform-box: fill-box; transform-origin: center }
+    .footer-cta .btn-creators:hover .wheel{ animation: footer_spinWheels .6s linear infinite }
+
+    @keyframes footer_drive{
+      0%   { transform: translateX(-110%); opacity: 0; }
+      10%  { opacity: 1; }
+      100% { transform: translateX(115%); opacity: 1; }
+    }
+    @keyframes footer_spinWheels{ to { transform: rotate(1turn); } }
+  </style>
+</div>
   </footer>
 
   <!-- Detail modal -->
